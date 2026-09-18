@@ -1,0 +1,79 @@
+name: Virtual PC Online (Tailscale)
+
+on:
+  workflow_dispatch:
+    inputs:
+      access_password:
+        description: 'Senha (use no mínimo 6 caracteres)'
+        required: true
+        default: '123456'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar senha do sistema
+        run: |
+          echo "runner:${{ github.event.inputs.access_password }}" | sudo chpasswd
+          sudo usermod -aG sudo runner
+
+      - name: Instalar Desktop + VNC
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies tightvncserver dbus-x11
+
+      - name: Configurar VNC (método mais confiável)
+        run: |
+          mkdir -p \~/.vnc
+          
+          # Método mais confiável de definir a senha
+          printf "%s\n%s\n" "\( {{ github.event.inputs.access_password }}" " \){{ github.event.inputs.access_password }}" | vncpasswd
+          
+          # Garante a permissão correta
+          chmod 600 \~/.vnc/passwd
+          
+          # Cria o arquivo de inicialização do XFCE
+          cat > \~/.vnc/xstartup << 'EOF'
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          export XKL_XMODMAP_DISABLE=1
+          exec startxfce4
+          EOF
+          chmod +x \~/.vnc/xstartup
+
+      - name: Iniciar VNC
+        run: |
+          vncserver -kill :1 > /dev/null 2>&1 || true
+          pkill -9 Xtightvnc || true
+          
+          vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+          
+          echo "VNC iniciado!"
+          sleep 3
+          ps aux | grep -i vnc
+
+      - name: Conectar Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          hostname: github-virtual-pc
+
+      - name: Mostrar informações
+        run: |
+          echo "========================================"
+          echo "PC Virtual pronto!"
+          echo "IP Tailscale: $(tailscale ip -4)"
+          echo "Conecte no VNC em: $(tailscale ip -4):5901"
+          echo "Usuário: runner"
+          echo "Senha: a que você digitou"
+          echo "========================================"
+          tailscale status
+
+      - name: Manter ligado
+        run: sleep infinity
