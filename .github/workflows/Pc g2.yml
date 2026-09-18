@@ -1,0 +1,67 @@
+name: Virtual PC Online (Tailscale)
+
+on:
+  workflow_dispatch:
+    inputs:
+      access_password:
+        description: 'Senha do usuário e do VNC'
+        required: true
+        default: '123456'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar senha
+        run: |
+          echo "runner:${{ github.event.inputs.access_password }}" | sudo chpasswd
+          sudo usermod -aG sudo runner
+
+      - name: Instalar Desktop + VNC
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies tightvncserver dbus-x11
+
+      - name: Configurar VNC
+        run: |
+          mkdir -p \~/.vnc
+          echo "${{ github.event.inputs.access_password }}" | vncpasswd -f > \~/.vnc/passwd
+          chmod 600 \~/.vnc/passwd
+          cat > \~/.vnc/xstartup << 'EOF'
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          export XKL_XMODMAP_DISABLE=1
+          exec startxfce4
+          EOF
+          chmod +x \~/.vnc/xstartup
+
+      - name: Iniciar VNC
+        run: |
+          vncserver -kill :1 || true
+          vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+
+      - name: Conectar Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          hostname: github-virtual-pc
+
+      - name: Mostrar IP
+        run: |
+          echo "========================================"
+          echo "PC Virtual pronto!"
+          echo "IP Tailscale: $(tailscale ip -4)"
+          echo "Conecte no VNC usando: $(tailscale ip -4):5901"
+          echo "Usuário: runner"
+          echo "Senha: a que você digitou"
+          echo "========================================"
+          tailscale status
+
+      - name: Manter ligado
+        run: sleep infinity
