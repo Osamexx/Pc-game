@@ -1,0 +1,83 @@
+name: Virtual PC On29339line (Tailscale)
+
+on:
+  workflow_dispatch:
+    inputs:
+      access_password:
+        description: 'Senha do usuário do sistema'
+        required: true
+        default: '123456'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar senha do sistema
+        run: |
+          echo "runner:${{ github.event.inputs.access_password }}" | sudo chpasswd
+          sudo usermod -aG sudo runner
+
+      - name: Instalar Desktop + TigerVNC
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            xfce4 xfce4-goodies \
+            tigervnc-standalone-server tigervnc-common \
+            dbus-x11
+
+      - name: Configurar e iniciar VNC (método direto)
+        run: |
+          mkdir -p \~/.vnc \~/.config/tigervnc
+          
+          # Cria a senha nos dois locais possíveis
+          umask 077
+          echo "12345678" | vncpasswd -f > \~/.vnc/passwd
+          cp \~/.vnc/passwd \~/.config/tigervnc/passwd
+          chmod 600 \~/.vnc/passwd \~/.config/tigervnc/passwd
+          
+          # xstartup
+          cat > \~/.vnc/xstartup << 'EOF'
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          export XKL_XMODMAP_DISABLE=1
+          exec startxfce4
+          EOF
+          chmod +x \~/.vnc/xstartup
+          
+          # Inicia o VNC de forma direta (evita o script problemático)
+          vncserver -kill :1 > /dev/null 2>&1 || true
+          
+          # Força o uso do arquivo de senha
+          Xtigervnc :1 -geometry 1920x1080 -depth 24 -rfbport 5901 -rfbauth \~/.vnc/passwd -SecurityTypes VncAuth &
+          
+          sleep 4
+          echo "VNC deve estar rodando agora..."
+          ps aux | grep -E 'Xtigervnc|vnc' | grep -v grep
+
+      - name: Conectar Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          hostname: github-virtual-pc
+
+      - name: Mostrar informações
+        run: |
+          echo "========================================"
+          echo "PC Virtual pronto!"
+          echo "IP Tailscale: $(tailscale ip -4)"
+          echo "Conecte no VNC: $(tailscale ip -4):5901"
+          echo ""
+          echo "Usuário: runner"
+          echo "Senha do sistema: a que você digitou"
+          echo "Senha do VNC: 12345678"
+          echo "========================================"
+          tailscale status
+
+      - name: Manter ligado
+        run: sleep infinity
