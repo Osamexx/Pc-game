@@ -1,0 +1,81 @@
+name: Virtual PC Online (Tailscale)
+
+on:
+  workflow_dispatch:
+    inputs:
+      access_password:
+        description: 'Senha do usuário runner e do VNC'
+        required: true
+        default: '123456'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar senha do usuário
+        run: |
+          echo "runner:${{ github.event.inputs.access_password }}" | sudo chpasswd
+          sudo usermod -aG sudo runner
+
+      - name: Instalar Desktop XFCE + VNC
+        run: |
+          sudo apt update
+          sudo DEBIAN_FRONTEND=noninteractive apt install -y \
+            xfce4 xfce4-goodies \
+            tightvncserver \
+            dbus-x11 \
+            firefox \
+            nano htop neofetch
+
+      - name: Configurar VNC
+        run: |
+          mkdir -p \~/.vnc
+          echo "${{ github.event.inputs.access_password }}" | vncpasswd -f > \~/.vnc/passwd
+          chmod 600 \~/.vnc/passwd
+
+          # Configuração do xstartup
+          cat > \~/.vnc/xstartup << 'EOF'
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          export XKL_XMODMAP_DISABLE=1
+          exec startxfce4
+          EOF
+          chmod +x \~/.vnc/xstartup
+
+      - name: Iniciar VNC Server
+        run: |
+          vncserver -kill :1 > /dev/null 2>&1 || true
+          vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+          echo "VNC rodando na porta 5901"
+
+      - name: Conectar ao Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          hostname: github-virtual-pc
+          # tags: tag:ci   # descomente se você usar tags
+
+      - name: Mostrar informações de conexão
+        run: |
+          echo "=============================================="
+          echo " PC Virtual pronto!"
+          echo ""
+          echo "1. Abra o app Tailscale no seu celular/PC"
+          echo "2. Procure o dispositivo: github-virtual-pc"
+          echo "3. Use um cliente VNC e conecte em:"
+          echo "   $(tailscale ip -4):5901"
+          echo ""
+          echo "Usuário: runner"
+          echo "Senha: a que você digitou"
+          echo "=============================================="
+          tailscale status
+          tailscale ip -4
+
+      - name: Manter a máquina ligada
+        run: sleep infinity
